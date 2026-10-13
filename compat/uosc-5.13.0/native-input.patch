@@ -1,0 +1,84 @@
+--- a/src/uosc/elements/Menu.lua
++++ b/src/uosc/elements/Menu.lua
+@@ -159,6 +159,9 @@
+ end
+ 
+ function Menu:destroy()
++	if self.root and self.root.native_input then
++		mp.set_property_native('user-data/uosc/native-input', nil)
++	end
+ 	Element.destroy(self)
+ 	self.is_closing = false
+ 	if not self.is_being_replaced then Elements:maybe('curtain', 'unregister', self.id) end
+@@ -1712,6 +1715,7 @@
+ 			if is_current then
+ 				cursor:zone('primary_down', rect, function()
+ 					self:select_index(nil)
++					if self.root.native_input_focus then self:command_or_event(self.root.native_input_focus, {}, {}) end
+ 				end)
+ 			end
+ 
+@@ -1752,6 +1756,15 @@
+ 						clip = '\\clip(' .. icon_rect.bx .. ',' .. rect.ay .. ',' .. rect.bx .. ',' .. rect.by .. ')',
+ 					}
+ 					local query, cursor = menu.search.query, menu.search.cursor
++					if menu.native_selection and menu.native_selection.finish > menu.native_selection.start then
++						local a, b=menu.native_selection.start, menu.native_selection.finish
++						local tail_width=text_width(query:sub(cursor+1),opts)
++						local end_x=math.max(round(rect.bx+1-tail_width),rect.cx)
++						local left=end_x-text_width(query:sub(a+1,cursor),opts)
++						local right=end_x+text_width(query:sub(cursor+1,b),opts)
++						ass:rect(left,rect.cy-self.font_size*0.6,right,rect.cy+self.font_size*0.6,
++							{color=fg,opacity=menu_opacity*0.25,clip=opts.clip})
++					end
+ 					-- Add a ZWNBSP suffix to prevent libass from trimming trailing spaces
+ 					local head = ass_escape(string.sub(query, 1, cursor)) .. '\239\187\191'
+ 					local tail_no_escape = string.sub(query, cursor + 1)
+@@ -1759,6 +1772,13 @@
+ 					cursor_ax = math.max(round(cursor_ax - text_width(tail_no_escape, opts)), rect.cx)
+ 					ass:txt(cursor_ax, rect.cy, 6, head, opts)
+ 					ass:txt(cursor_ax, rect.cy, 4, tail, opts)
++					if menu.native_composition and menu.native_composition.start >= 0 then
++						local a,b=menu.native_composition.start,menu.native_composition.finish
++						local left=cursor_ax-text_width(query:sub(a+1,cursor),opts)
++						local right=cursor_ax+text_width(query:sub(cursor+1,b),opts)
++						ass:rect(left,rect.cy+self.font_size*0.6,right,rect.cy+self.font_size*0.6+state.scale,
++							{color=fg,opacity=menu_opacity,clip=opts.clip})
++					end
+ 				else
+ 					local placeholder = (menu.search_style == 'palette' and menu.ass_safe_title)
+ 						and menu.ass_safe_title
+@@ -1774,6 +1794,16 @@
+ 				end
+ 
+ 				-- Selected input indicator for submittable searches.
++				if is_current and self.root.native_input then
++					local layout = {type=self.type, x=cursor_ax, y=rect.cy, width=display.width, height=display.height,query=menu.search.query,
++						font=config.font, font_size=self.font_size, input_x=icon_rect.bx, input_y=rect.ay,
++						input_width=rect.bx-icon_rect.bx, input_height=rect.by-rect.ay}
++					local signature=utils.format_json(layout)
++					if signature ~= self.native_input_signature then
++						self.native_input_signature=signature
++						mp.set_property_native('user-data/uosc/native-input', layout)
++					end
++				end
+ 				-- (input is selected when `selected_index` is `nil`)
+ 				if menu.search_debounce == 'submit' and not menu.selected_index then
+ 					local size_half = round(1 * state.scale)
+@@ -1828,4 +1858,16 @@
+ 	return ass
+ end
+ 
++mp.register_script_message('native-input-update', function(json)
++	local data=utils.parse_json(json)
++	local menu=Menu:is_open(data and data.type)
++	if not menu or not menu.root.native_input or not menu.current.search or type(data.display)~='string' then return end
++	menu.current.search.query=data.display
++	menu.current.search.cursor=clamp(0,tonumber(data.cursor) or #data.display,#data.display)
++	menu.current.native_selection={start=tonumber(data.selection_start) or 0,finish=tonumber(data.selection_end) or 0}
++	menu.current.native_composition={start=tonumber(data.composition_start) or -1,finish=tonumber(data.composition_end) or -1}
++	menu:select_index(nil)
++	request_render()
++end)
++
+ return Menu

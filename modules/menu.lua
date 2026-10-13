@@ -489,6 +489,12 @@ function open_content_menu(pos)
 end
 
 local menu_items_config = {
+    fontname = { title = "弹幕字体", hint = options.fontname, original = options.fontname,
+        text_input = true, footnote = "选择已安装的字体；也可输入字体名称，如 Microsoft YaHei", },
+    fps = { title = "弹幕帧率", hint = options.fps, original = options.fps,
+        text_input = true, footnote = "输入 1–1000 帧，如 60、120 或 60/1.001；独立刷新弹幕，实际受显示器和性能限制", },
+    merge_screen_duplicates = { title = "折叠重复弹幕", hint = options.merge_screen_duplicates,
+        original = options.merge_screen_duplicates, footnote = "点击切换；设置自动保存，立即生效", },
     bold = { title = "粗体", hint = options.bold, original = options.bold,
         footnote = "true / false", },
     fontsize = { title = "大小", hint = options.fontsize, original = options.fontsize,
@@ -505,7 +511,7 @@ local menu_items_config = {
         scope = { min = 0.0, max = 1.0 }, footnote = "显示范围(0.0-1.0)", },
 }
 -- 创建一个包含键顺序的表，这是样式菜单的排布顺序
-local ordered_keys = {"bold", "fontsize", "outline", "shadow", "scrolltime", "opacity", "displayarea"}
+local ordered_keys = {"bold", "fontsize", "outline", "shadow", "scrolltime", "opacity", "displayarea", "merge_screen_duplicates", "fontname", "fps"}
 
 -- 设置弹幕样式菜单
 function open_style_menu_get(query, indicator)
@@ -547,7 +553,7 @@ function open_style_menu_get(query, indicator)
         table.insert(menu_log, { text = ("-"):rep(33), style = "{\\c&H888888&}" })
         if select_num == 0 then
             table.insert(menu_log, {
-                text = "注: 样式更改仅在本次播放生效",
+                text = "注: 设置自动保存，重启后仍生效",
                 style = "{\\c&HFFDE7F&}"
             })
             table.insert(menu_log, {
@@ -564,7 +570,7 @@ function open_style_menu_get(query, indicator)
             input_text = string.format("已输入%s: %s", suffix, input_text)
 
             local scope = config and config.footnote or ""
-            local hint_text = select_query == "bold" and "提示: 输入【y】切换状态" or "提示: " .. scope
+            local hint_text = type(options[select_query]) == "boolean" and "提示: 输入【y】切换状态" or "提示: " .. scope
             local hint_style = "{\\c&H999999&}"
             if source and source:lower() == "\\r" then
                 hint_text = string.format("提示: 回车将恢复默认配置 < %s >", config.original)
@@ -576,7 +582,7 @@ function open_style_menu_get(query, indicator)
                 mp.add_timeout(1.5, build_menu)
             elseif indicator == "error" then
                 indicator = ""
-                hint_text = "提示: 输入非数字字符或范围出错"
+                hint_text = "提示: 输入无效，请按提示输入"
                 hint_style = "{\\c&H4C4CC3&}"
                 mp.add_timeout(1.5, build_menu)
             end
@@ -621,10 +627,10 @@ function open_style_menu_get(query, indicator)
                 local args = string.format('{"type":"activate","action":"%s","index":%d}', select_query, select_num)
                 mp.commandv("script-message-to", mp.get_script_name(), "setup-danmaku-style", args)
             else
-                if menu_items_config[select_query]["scope"] ~= nil then
+                if menu_items_config[select_query]["scope"] ~= nil or menu_items_config[select_query].text_input then
                     input.terminate()
                     mp.commandv("script-message-to", mp.get_script_name(), "setup-danmaku-style", select_query, text)
-                elseif text:lower() == "y" and select_query == "bold" then
+                elseif text:lower() == "y" and type(options[select_query]) == "boolean" then
                     input.terminate()
                     local args = string.format('{"type":"activate","index":%d}', select_num)
                     mp.commandv("script-message-to", mp.get_script_name(), "setup-danmaku-style", args)
@@ -641,7 +647,7 @@ function open_style_menu_uosc(actived, status)
         local config = menu_items_config[key]
         local item_config = {
             title = config.title,
-            hint = "目前：" .. tostring(config.hint),
+            hint = "目前：" .. ((key == "merge_screen_duplicates") and (config.hint and "开启" or "关闭") or tostring(config.hint)),
             active = key == actived,
             keep_open = true,
             selectable = true,
@@ -657,7 +663,7 @@ function open_style_menu_uosc(actived, status)
         type = "menu_style",
         title = "弹幕样式",
         search_style = "disabled",
-        footnote = "样式更改仅在本次播放生效",
+        footnote = "设置自动保存，重启后仍生效",
         item_actions_place = "outside",
         items = items,
         callback = { mp.get_script_name(), 'setup-danmaku-style'},
@@ -674,7 +680,7 @@ function open_style_menu_uosc(actived, status)
             -- "refresh" 模式会清除输入框文字
             menu_props.title = "  " .. menu_items_config[actived]["footnote"]
         elseif status == "error" then
-            menu_props.title = "输入非数字字符或范围出错"
+            menu_props.title = "输入无效，请按提示输入"
             -- 创建一个定时器，在1秒后触发回调函数，删除搜索栏错误信息
             mp.add_timeout(1.0, function() open_style_menu_uosc(actived, "updata") end)
         end
@@ -684,6 +690,11 @@ function open_style_menu_uosc(actived, status)
         menu_props.on_search = { "script-message-to", mp.get_script_name(), "setup-danmaku-style", actived }
     end
 
+    if actived == "merge_screen_duplicates" then
+        menu_props.title = "弹幕样式"
+        menu_props.search_style = "disabled"
+        menu_props.on_search = nil
+    end
     local json_props = utils.format_json(menu_props)
     mp.commandv("script-message-to", "uosc", actions, json_props)
 end
@@ -700,6 +711,67 @@ function open_style_menu(actived, status)
     end
 end
 
+
+local installed_font_names
+
+local function show_danmaku_font_menu(names)
+    local items = {{title = "返回弹幕样式", value = "", keep_open = true}}
+    local seen = {}
+    local function add(name)
+        name = normalize_danmaku_font(name)
+        if not name or seen[name] then return end
+        seen[name] = true
+        items[#items + 1] = {title = name, value = name, active = name == options.fontname}
+    end
+    add(options.fontname)
+    for _, name in ipairs(names) do add(name) end
+    add("sans-serif")
+    mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json({
+        type = "menu_danmaku_font", title = "弹幕字体", search_style = "on_demand",
+        footnote = "选择字体后立即生效并保存；输入英文名可筛选字体",
+        items = items, callback = {mp.get_script_name(), "setup-danmaku-font"},
+    }))
+end
+
+function open_danmaku_font_menu()
+    if installed_font_names then show_danmaku_font_menu(installed_font_names); return end
+    mp.command_native_async({name = "subprocess", playback_only = false, capture_stdout = true,
+        capture_stderr = true, args = {"powershell.exe", "-NoProfile", "-NonInteractive", "-Command", [[
+            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+            Add-Type -AssemblyName System.Drawing
+            $fonts = New-Object System.Drawing.Text.InstalledFontCollection
+            try { ConvertTo-Json -Compress -InputObject @($fonts.Families | ForEach-Object { $_.Name } | Sort-Object -Unique) }
+            finally { $fonts.Dispose() }
+        ]]}}, function(success, result)
+            local names = success and result and result.status == 0 and utils.parse_json(result.stdout)
+            if type(names) == "table" and #names > 0 then
+                installed_font_names = names
+            else
+                -- Keep direct name input available if font enumeration fails.
+                open_style_menu("fontname", "updata")
+                return
+            end
+            -- Do not reopen a font picker if the user left the style menu while loading.
+            local current = mp.get_property("user-data/uosc/menu/type")
+            if current == '"menu_style"' or current == "menu_style" then
+                show_danmaku_font_menu(names)
+            end
+        end)
+end
+
+mp.register_script_message("setup-danmaku-font", function(json)
+    local event = utils.parse_json(json)
+    if not event or event.type ~= "activate" or type(event.value) ~= "string" then return end
+    if event.value == "" then open_style_menu(); return end
+    local name = normalize_danmaku_font(event.value)
+    if not name then return end
+    options.fontname = name
+    save_danmaku_style_option("fontname")
+    menu_items_config.fontname.hint = name
+    if ENABLED and get_danmaku_visibility() then render() end
+    open_style_menu()
+end)
+
 -- 打开以指定时间为起点的延迟菜单
 function open_delay_from_time_get(source, time, status)
     mp.commandv('script-message-to', 'console', 'disable')
@@ -715,7 +787,7 @@ function open_delay_from_time_get(source, time, status)
         local hint_text = "提示：请输入数字，单位（秒）/ 或者按照形如\"14m15s\"的格式输入分钟数加秒数"
         local hint_style = "{\\c&H999999&}"
         if status == "error" then
-            hint_text = "提示: 输入非数字字符或范围出错"
+            hint_text = "提示: 输入无效，请按提示输入"
             hint_style = "{\\c&H4C4CC3&}"
         end
 
@@ -767,7 +839,7 @@ function open_delay_from_time_uosc(source, time, status)
     }
 
     if status == "error" then
-    menu_props.title = "输入非数字字符或范围出错"
+    menu_props.title = "输入无效，请按提示输入"
     mp.add_timeout(1.0, function() open_delay_from_time_uosc(source, time) end)
     end
 
@@ -849,7 +921,7 @@ function open_delay_menu_get(source, status)
                 mp.add_timeout(1.5, build_menu)
             elseif status == "error" then
                 status = ""
-                hint_text = "提示: 输入非数字字符或范围出错"
+                hint_text = "提示: 输入无效，请按提示输入"
                 hint_style = "{\\c&H4C4CC3&}"
                 mp.add_timeout(1.5, build_menu)
             end
@@ -931,7 +1003,7 @@ function open_delay_menu_uosc(source_url, status)
     }
     if source_url ~= nil then
         if status == "error" then
-            menu_props.title = "输入非数字字符或范围出错"
+            menu_props.title = "输入无效，请按提示输入"
             -- 创建一个定时器，在1秒后触发回调函数，删除搜索栏错误信息
             mp.add_timeout(1.0, function() open_delay_menu_uosc(source_url) end)
         else
@@ -964,6 +1036,7 @@ local total_menu_items_config = {
     { title = "从源添加弹幕", action = "open_add_source_menu" },
     { title = "弹幕源延迟设置", action = "open_source_delay_menu" },
     { title = "弹幕样式", action = "open_danmaku_style_menu" },
+    { title = "弹幕屏蔽", action = "danmaku-blocklist-open" },
     { title = "弹幕内容", action = "open_content_danmaku_menu" },
 }
 
@@ -1183,9 +1256,17 @@ mp.register_script_message("setup-danmaku-style", function(query, text)
         -- item点击 或 图标点击
         if event.type == "activate" then
             if not event.action then
-                if ordered_keys[event.index] == "bold" then
-                    options.bold = not options.bold
-                    menu_items_config.bold.hint = options.bold and "true" or "false"
+                local key = ordered_keys[event.index]
+                if key and type(options[key]) == "boolean" then
+                    options[key] = not options[key]
+                    save_danmaku_style_option(key)
+                    menu_items_config[key].hint = options[key]
+                    if key == "merge_screen_duplicates" then
+                        load_danmaku(true, true)
+                    end
+                elseif key == "fontname" and uosc_available then
+                    open_danmaku_font_menu()
+                    return
                 end
                 -- "updata" 模式会保留输入框文字
                 open_style_menu(ordered_keys[event.index], "updata")
@@ -1193,9 +1274,15 @@ mp.register_script_message("setup-danmaku-style", function(query, text)
             else
                 -- msg.info("event.action：" .. event.action)
                 options[event.action] = menu_items_config[event.action]["original"]
+                save_danmaku_style_option(event.action)
                 menu_items_config[event.action]["hint"] = options[event.action]
+                if event.action == "fps" then
+                    refresh_danmaku_fps()
+                elseif event.action == "fontname" and ENABLED and get_danmaku_visibility() then
+                    render()
+                end
                 open_style_menu(event.action, "updata")
-                if event.action == "fontsize" or event.action == "scrolltime" then
+                if event.action == "fontsize" or event.action == "scrolltime" or event.action == "merge_screen_duplicates" then
                     load_danmaku(true)
                 end
             end
@@ -1203,6 +1290,18 @@ mp.register_script_message("setup-danmaku-style", function(query, text)
     else
         -- 数值输入
         if text == nil or text == "" then
+            return
+        end
+        if query == "fontname" or query == "fps" then
+            local value = query == "fontname" and normalize_danmaku_font(text) or nil
+            if query == "fps" then value = normalize_danmaku_fps(text) end
+            if not value then open_style_menu(query, "error"); return end
+            options[query] = value
+            save_danmaku_style_option(query)
+            menu_items_config[query].hint = value
+            if query == "fps" then refresh_danmaku_fps()
+            elseif ENABLED and get_danmaku_visibility() then render() end
+            open_style_menu(query, "refresh")
             return
         end
         local newText, _ = text:gsub("%s", "") -- 移除所有空白字符
@@ -1216,6 +1315,7 @@ mp.register_script_message("setup-danmaku-style", function(query, text)
                     num = tostring(math.floor(num))
                 end
                 options[query] = tostring(num)
+                save_danmaku_style_option(query)
                 menu_items_config[query]["hint"] = options[query]
                 -- "refresh" 模式会清除输入框文字
                 open_style_menu(query, "refresh")

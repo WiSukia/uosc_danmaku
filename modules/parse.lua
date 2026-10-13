@@ -2,6 +2,7 @@ local msg   = require 'mp.msg'
 local utils = require 'mp.utils'
 local s2t   = require("dicts/s2t_chars")
 local t2s   = require("dicts/t2s_chars")
+local word_filter = require('modules/blocklist')
 
 local function ass_escape(text)
     return text:gsub("\\", "\\\\")
@@ -215,6 +216,83 @@ local function merge_duplicate_danmaku(danmakus, threshold)
 
     table.sort(merged, function(a, b) return a.time < b.time end)
     return merged
+end
+
+-- Fold before layout: text and count share one trajectory and one lifetime.
+local ignored_fold_chars = {}
+for character in utf8_iter("!！?？,，.。;；:：、…~～\"'“”‘’（）()【】[]《》<>　") do
+    ignored_fold_chars[character] = true
+end
+
+local function fold_key(text)
+    local characters = {}
+    local original = utf8_to_table(text)
+    for i, character in ipairs(original) do
+        -- Decimal/time punctuation between digits changes the content.
+        local numeric_separator = (character == "." or character == ":" or character == ",") and
+            original[i - 1] and original[i + 1] and
+            original[i - 1]:match("^%d$") and original[i + 1]:match("^%d$")
+        if not character:match("^%s$") and (numeric_separator or not ignored_fold_chars[character]) then
+            characters[#characters + 1] = character:lower()
+        end
+    end
+    local key = table.concat(characters)
+    -- Keep punctuation-only comments distinct instead of grouping all as empty.
+    return key ~= "" and key or text
+end
+
+local function fold_danmaku_time_window(danmakus)
+    local configured = tonumber(options.merge_window) or 15
+    local scrolltime = tonumber(options.scrolltime) or 15
+    local fixtime = tonumber(options.fixtime) or 5
+    configured = math.max(0, configured)
+    local ordered, active = {}, {}
+    for _, d in ipairs(danmakus) do
+        if d.type >= 1 and d.type <= 5 then
+            local duration = d.type >= 1 and d.type <= 3 and scrolltime or fixtime
+            local start = d.type == 1 and math.floor(d.time + 0.5) or d.time
+            local text = ch_convert_cached(decode_html_entities(d.text))
+            local key = fold_key(text)
+            local group = active[key]
+            -- Use a fixed first-comment window; never extend it by chaining arrivals.
+            if not group or start >= group.deadline then
+                group = {
+                    anchor = d, count = 0, winner = text, variants = {},
+                    deadline = start + math.min(configured, duration),
+                }
+                ordered[#ordered + 1] = group
+                active[key] = group
+            end
+            group.count = group.count + 1
+            local variant = group.variants[text]
+            if not variant then
+                variant = {count = 0, example = d, text = text, order = group.count}
+                group.variants[text] = variant
+            end
+            variant.count = variant.count + 1
+        end
+    end
+
+    local folded = {}
+    for _, group in ipairs(ordered) do
+        -- Ties prefer the first version in chronological order.
+        local winner = group.variants[group.winner]
+        for text, variant in pairs(group.variants) do
+            if variant.count > winner.count or
+                    (variant.count == winner.count and variant.order < winner.order) then
+                winner = variant
+            end
+        end
+        local merged = {}
+        for key, value in pairs(group.anchor) do merged[key] = value end
+        merged.text = winner.example.text
+        merged.color = winner.example.color
+        merged.size = winner.example.size
+        merged.fold_clean_text = winner.text
+        merged.merge_count = group.count
+        folded[#folded + 1] = merged
+    end
+    return folded
 end
 
 -- 限制每屏弹幕条数
@@ -518,6 +596,7 @@ function convert_danmaku_to_xml(danmaku_out)
 end
 
 function convert_danmaku_to_ass_events(force)
+    word_filter.reload()
     local per_source_lists = {}
     for url, source in pairs(DANMAKU.sources) do
         if not source.blocked and source.data then
@@ -559,7 +638,8 @@ function convert_danmaku_to_ass_events(force)
                     text = d.text,
                     source = url,
                 }
-                if not is_blacklisted(d.text, black_patterns) then
+                if not is_blacklisted(d.text, black_patterns)
+                        and not word_filter.matches(ch_convert_cached(decode_html_entities(d.text))) then
                     table.insert(list, entry)
                 end
             end
@@ -593,11 +673,15 @@ function convert_danmaku_to_ass_events(force)
         end
     end
 
-    if options.max_screen_danmaku > 0 and options.merge_tolerance <= 0 then
-        options.merge_tolerance = options.scrolltime
-    end
+    if options.merge_screen_duplicates then
+        danmakus = fold_danmaku_time_window(danmakus)
+    else
+        if options.max_screen_danmaku > 0 and options.merge_tolerance <= 0 then
+            options.merge_tolerance = options.scrolltime
+        end
 
-    danmakus = merge_duplicate_danmaku(danmakus, options.merge_tolerance)
+        danmakus = merge_duplicate_danmaku(danmakus, options.merge_tolerance)
+    end
 
     if #danmakus == 0 then
         if not force then
@@ -651,7 +735,10 @@ function convert_danmaku_to_ass_events(force)
         local d = ev.danmaku
         local appear_time = ev.start_time
         local danmaku_type = d.type
-        local clean_text = ch_convert_cached(decode_html_entities(d.text))
+        local clean_text = d.fold_clean_text or ch_convert_cached(decode_html_entities(d.text))
+        if (d.merge_count or 1) > 1 then
+            clean_text = clean_text .. " × " .. tostring(d.merge_count)
+        end
         local text = ass_escape(clean_text)
                     :gsub("x(%d+)$", "{\\b1\\i1}x%1")
 
@@ -709,6 +796,7 @@ function convert_danmaku_to_ass_events(force)
                 style = style,
                 text = text,
                 clean_text = clean_text,
+                merge_count = d.merge_count or 1,
                 pos = pos,
                 move = move,
                 source = d.source,

@@ -19,12 +19,13 @@ options = {
     proxy = "",
     -- 可选：向 HTTP 请求传递 cookie.txt 文件路径
     cookie_file = "",
-    -- 使用 fps 视频滤镜，大幅提升弹幕平滑度。默认禁用
-    vf_fps = false,
-    -- 设置要使用的 fps 滤镜参数
-    fps = "60/1.001",
+    -- 设置弹幕独立刷新目标帧率；默认 60，可填写分数
+    fps = "60",
     -- 指定合并重复弹幕的时间间隔的容差值，单位为秒。默认值: -1，表示禁用
     merge_tolerance = -1,
+    -- Fold similar comments in a fixed time window before assigning lanes.
+    merge_screen_duplicates = false,
+    merge_window = 15,
     -- 指定弹幕关联历史记录文件的路径，支持绝对路径和相对路径
     history_path = "~~/danmaku-history.json",
     open_search_danmaku_menu_key = "Ctrl+d",
@@ -75,3 +76,97 @@ options = {
 }
 
 opt.read_options(options, mp.get_script_name(), function() end)
+
+-- Persist accepted style menu changes in the standard script options file.
+local persistent_style_keys = {
+    bold = true, fontsize = true, outline = true, shadow = true,
+    scrolltime = true, opacity = true, displayarea = true,
+    merge_screen_duplicates = true, fps = true, fontname = true,
+}
+local style_config_path = mp.command_native({
+    "expand-path", "~~/script-opts/" .. mp.get_script_name() .. ".conf"
+})
+
+
+function normalize_danmaku_fps(value)
+    if type(value) ~= "string" and type(value) ~= "number" then return end
+    local text = tostring(value):gsub("%s", "")
+    local numerator, denominator = text:match("^(%d+%.?%d*)/(%d+%.?%d*)$")
+    local rate
+    if numerator then
+        denominator = tonumber(denominator)
+        if denominator <= 0 then return end
+        rate = tonumber(numerator) / denominator
+    elseif text:match("^%d+%.?%d*$") then
+        rate = tonumber(text)
+    end
+    if not rate or rate < 1 or rate > 1000 then return end
+    return text
+end
+
+function normalize_danmaku_font(value)
+    if type(value) ~= "string" then return end
+    local text = value:match("^%s*(.-)%s*$")
+    -- Names are written to one config line and inserted into an ASS font tag.
+    if text == "" or #text > 256 or text:find("[%c\\{}#]") then return end
+    return text
+end
+
+function save_danmaku_style_option(key)
+    if not persistent_style_keys[key] then return end
+    local value = options[key]
+    if key == "fontname" then
+        value = normalize_danmaku_font(value)
+        if not value then return end
+    elseif key == "fps" then
+        value = normalize_danmaku_fps(value)
+        if not value then return end
+    elseif type(value) == "boolean" then
+        value = value and "yes" or "no"
+    else
+        value = tonumber(value)
+        if not value or value ~= value or math.abs(value) == math.huge then return end
+        value = tostring(value)
+    end
+
+    local function report_error(reason)
+        mp.msg.error("Unable to save danmaku style: " .. tostring(reason))
+        mp.osd_message("弹幕设置保存失败，请检查配置文件权限")
+    end
+
+    local input, err, code = io.open(style_config_path, "rb")
+    local contents = ""
+    if input then
+        local read_err
+        contents, read_err = input:read("*a")
+        input:close()
+        if not contents then report_error(read_err); return end
+    elseif code ~= 2 then
+        -- Only a missing file may be created; never overwrite an unreadable file.
+        report_error(err)
+        return
+    end
+
+    local newline = contents:find("\r\n", 1, true) and "\r\n" or "\n"
+    local normalized = contents:gsub("\r\n", "\n")
+    if normalized ~= "" and normalized:sub(-1) ~= "\n" then normalized = normalized .. "\n" end
+    local lines, found = {}, false
+    for line in normalized:gmatch("(.-)\n") do
+        local updated_line = line
+        if line:match("^%s*" .. key .. "%s*=") then
+            local comment = line:match("(%s+#.*)$") or ""
+            updated_line = key .. "=" .. value .. comment
+            found = true
+        end
+        lines[#lines + 1] = updated_line
+    end
+    if not found then lines[#lines + 1] = key .. "=" .. value end
+    local updated = table.concat(lines, newline) .. newline
+    if updated == contents then return end
+
+    local output, open_err = io.open(style_config_path, "wb")
+    if not output then report_error(open_err); return end
+    local written, write_err = output:write(updated)
+    local closed, close_err = output:close()
+    if not written or not closed then report_error(write_err or close_err) end
+end

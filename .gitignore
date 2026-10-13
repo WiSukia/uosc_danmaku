@@ -1,3 +1,12 @@
-danmaku/*
-*.toml
-.*
+*.bak
+*.bak-*
+*.tmp
+*.log
+__pycache__/
+*.pyc
+UoscInputBridge.exe
+dist/
+build/
+danmak*-history.json
+uosc_danmaku-blocklist.json*
+cookie*.txt
