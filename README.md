@@ -26,7 +26,7 @@
    ```
 
    安装脚本仅接受未修改的 uosc 5.13.0 `Menu.lua`，会备份并回读。已有修改或其他版本会停止，请自行合并 `compat/uosc-5.13.0/native-input.patch`。不要直接覆盖其他定制的 uosc 文件。
-5. 重启播放器。默认 `Ctrl+d` 搜索弹幕，`j` 显示/隐藏。uosc 控件、依赖 `curl` 等原有安装方式见 [上游使用说明](docs/UPSTREAM_README.md)。
+5. 重启播放器。默认 `Ctrl+d` 搜索弹幕，`j` 显示/隐藏。继续阅读下方的 [基础使用说明](#基础使用说明)，配置 uosc 控件和可选功能。
 
 ZIP 中的输入助手由仓库 `UoscInputBridge.cs` 编译；不含个人播放历史、屏蔽词、Cookie、代理设置或播放器完整配置。关键词会保存到用户配置目录的 `script-opts/uosc_danmaku-blocklist.json`，历史记录默认保存为 `danmaku-history.json`。
 
@@ -45,6 +45,202 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-helper.ps1
 本 fork 手动从 Release 更新；插件内的 `check-update` 只提示下载位置。通用示例使用原项目提供的代理服务，源码仍保留 v2.1.0 的 API 实现和默认值；服务来源、限制和可用性依赖各提供方。未加入私人凭据；继承的 API 常量与 v2.1.0 一致。
 
 当前本次验证包括 Lua 5.1 语法与行为模拟、干净安装目录下的隔离 libmpv 运行，以及 C# 编译、补丁和包结构检查。模拟和隔离运行不能保证真实窗口的持续播放表现，也不证明真实输入法候选词交互。Linux/macOS 与真实中文输入法需进一步验证。
+
+## 基础使用说明
+
+以下根据 [Tony15246/uosc_danmaku v2.1.0 使用说明](https://github.com/Tony15246/uosc_danmaku/blob/v2.1.0/README.md) 和本分支源码整理，适用于本改版。原项目文档副本保留在 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)，供了解原版和历史行为；其中 FPS 滤镜、通知位置、自动更新等旧说明不适用于本改版，以本 README 为准。
+
+### 原项目的基础功能
+
+- 从弹弹play或兼容的自定义服务搜索作品、选择集数并加载弹幕。
+- 通过 uosc 控件和菜单搜索、开关弹幕、管理弹幕源、修改样式及调整延迟。
+- 加入受支持的网络弹幕源，也可以手动加载本地 XML / ASS 弹幕文件。
+- 记录视频与弹幕的关联；开启自动加载后，可在重新播放和识别同目录集数时复用记录。
+- 按配置加载同名本地 XML、在本地视频关闭时保存弹幕，以及处理支持的网络播放地址。
+- 支持简繁转换、原版重复合并和文件形式的屏蔽规则。
+
+这些是继承的功能，具体网站、API 和网络地址能否使用取决于对应服务。本改版新增的折叠、关键词菜单和独立刷新见上方 [改动](#改动)。
+
+### 运行依赖与目录
+
+推荐使用带 uosc 的 mpv / mpv.net。通过 `mp.input` 使用部分基础菜单时，按原项目要求需 mpv 0.39.0 或以上；本改版的 Windows 原生中文输入依赖上方指定的 uosc 兼容补丁。哈希匹配还依赖 LuaJIT 或 Lua 5.2，单纯通过 Lua 5.1 语法检查不代表哈希功能可用。
+
+HTTP 请求需要播放器进程能找到 `curl`。安装后保持脚本文件夹名为 `uosc_danmaku`，因为控件、配置和消息都使用这个名称。配置目录的主要结构如下：
+
+```text
+mpv 配置目录/
+├── input.conf
+├── script-opts/
+│   ├── uosc.conf
+│   └── uosc_danmaku.conf
+└── scripts/
+    ├── uosc/
+    └── uosc_danmaku/
+        ├── main.lua
+        ├── apis/
+        ├── dicts/
+        ├── modules/
+        ├── LICENSE
+        ├── UoscInputBridge.cs
+        └── UoscInputBridge.exe
+```
+
+最后两个文件用于 Windows 输入助手。`input.conf` 管理快捷键，`uosc.conf` 管理播放器控件，`uosc_danmaku.conf` 管理弹幕选项；不要把三个文件的配置混在一起。
+
+### uosc 控件配置
+
+编辑 `script-opts/uosc.conf` 中已有的 `controls=`，把需要的弹幕控件插入逗号分隔的控件列表，保留原来的控件。本例采用 uosc 的 `command:` 写法，向指定的弹幕脚本发送消息。
+
+| 功能 | 加入 `controls` 的内容 |
+| --- | --- |
+| 搜索弹幕 | `command:search:script-message-to uosc_danmaku open_search_danmaku_menu?搜索弹幕` |
+| 弹幕开关 | `cycle:toggle_on:show_danmaku@uosc_danmaku:on=toggle_on/off=toggle_off?弹幕开关` |
+| 添加弹幕源 | `command:add_box:script-message-to uosc_danmaku open_add_source_menu?从源添加弹幕` |
+| 弹幕样式 | `command:palette:script-message-to uosc_danmaku open_danmaku_style_menu?弹幕样式` |
+| 弹幕设置 | `command:grid_view:script-message-to uosc_danmaku open_add_total_menu?弹幕设置` |
+| 弹幕源延迟 | `command:more_time:script-message-to uosc_danmaku open_source_delay_menu?弹幕源延迟` |
+
+例如，下面是包含搜索、开关、样式和设置入口的一套完整示例。已有自定义控件时请合并需要的条目。
+
+```ini
+controls=menu,gap,subtitles,<has_many_audio>audio,<has_many_video>video,<has_many_edition>editions,<stream>stream-quality,command:search:script-message-to uosc_danmaku open_search_danmaku_menu?搜索弹幕,cycle:toggle_on:show_danmaku@uosc_danmaku:on=toggle_on/off=toggle_off?弹幕开关,command:palette:script-message-to uosc_danmaku open_danmaku_style_menu?弹幕样式,command:grid_view:script-message-to uosc_danmaku open_add_total_menu?弹幕设置,gap,space,speed,space,shuffle,loop-playlist,loop-file,gap,prev,items,next,gap,fullscreen
+```
+
+没有添加控件时，仍可用快捷键调用相应功能。改版关键词屏蔽入口在弹幕设置菜单内，也可以用下方消息直接打开。
+
+### 快捷键与脚本消息
+
+默认 `Ctrl+d` 搜索，`j` 显示/隐藏弹幕。如果在 `input.conf` 中明确绑定了同一个按键，以该文件的绑定为准。
+
+下面是一套可选绑定，复制前检查是否与自己的按键冲突：
+
+```text
+Ctrl+d script-message-to uosc_danmaku open_search_danmaku_menu
+j script-message-to uosc_danmaku show_danmaku_keyboard
+Ctrl+Shift+d script-message-to uosc_danmaku open_add_total_menu
+Ctrl+Shift+s script-message-to uosc_danmaku open_danmaku_style_menu
+Ctrl+Shift+b script-message-to uosc_danmaku danmaku-blocklist-open
+```
+
+也可以在 `script-opts/uosc_danmaku.conf` 中更改插件提供的两个默认键：
+
+```ini
+open_search_danmaku_menu_key=Ctrl+d
+show_danmaku_keyboard_key=j
+```
+
+其余可用消息如下。`KEY` 是示意占位符，使用时替换成自己的按键。
+
+| 功能 | `input.conf` 示例 |
+| --- | --- |
+| 添加或管理弹幕源 | `KEY script-message-to uosc_danmaku open_add_source_menu` |
+| 打开各源延迟菜单 | `KEY script-message-to uosc_danmaku open_source_delay_menu` |
+| 给整体弹幕增加 0.5 秒延迟 | `KEY script-message-to uosc_danmaku danmaku-delay 0.5` |
+| 给整体弹幕减少 0.5 秒延迟 | `KEY script-message-to uosc_danmaku danmaku-delay -0.5` |
+| 保存当前弹幕为 XML | `KEY script-message-to uosc_danmaku immediately_save_danmaku` |
+| 清除当前视频的弹幕源关联 | `KEY script-message-to uosc_danmaku clear-source` |
+| 显示改版手动更新提示 | `KEY script-message-to uosc_danmaku check-update` |
+
+手动保存限本地视频，输出到视频目录下的同名 XML，现有同名文件可能被覆盖。网络视频不支持这项保存方式。清除源关联会修改当前视频的弹幕关联记录。
+
+### 自动加载与弹幕源
+
+在 `script-opts/uosc_danmaku.conf` 中按需开启：
+
+```ini
+# 复用视频关联记录，识别同目录剧集，并尝试哈希匹配
+auto_load=yes
+# 自动加载视频旁边的同名 XML
+autoload_local_danmaku=yes
+# 对受支持的网络视频地址尝试自动加载与关联
+autoload_for_url=yes
+# 本地视频关闭时自动保存同名 XML
+save_danmaku=yes
+```
+
+这四项代码默认均为 `no`，不必全部开启。自动加载还受记忆的弹幕开关状态影响；没有显示弹幕时先按 `j` 开启。
+
+同目录剧集自动关联依赖文件名的集数识别，建议每个目录只放同一作品。关联错误时重新搜索并选择正确集数。启用同名 XML 自动加载后，它会优先于其他自动加载方式；希望重新获取在线弹幕时，可先关闭该选项或移走旧 XML。
+
+在“从源添加弹幕”中可填写受支持的视频页面地址或本地 XML / ASS 的绝对路径。例如：
+
+```text
+https://www.bilibili.com/video/BV1kx411o7Yo
+C:\Videos\episode01.xml
+```
+
+地址解析和弹幕内容来自第三方服务，示例不保证当前可访问。多个来源的偏移可在“弹幕源延迟”中分别设置。原版 `add_from_source` 选项已经废除，不需要再添加它。
+
+### 常用弹幕配置
+
+除菜单保存外，也可直接编辑 `script-opts/uosc_danmaku.conf`，重启播放器使文件中的设置生效。下表为**代码默认值**；发布包示例另外设置了 API 代理并开启改版折叠。
+
+| 配置项 | 代码默认值 | 用途 |
+| --- | --- | --- |
+| `api_server` | `https://api.dandanplay.net` | 弹弹play兼容服务地址；发布示例使用原项目代理 |
+| `fallback_server` | `https://api.danmu.icu` | 部分非动画弹幕的兜底服务 |
+| `proxy` | 空 | HTTP 请求代理，按自己的网络环境填写 |
+| `cookie_file` | 空 | 可选 Cookie 文件路径，不要提交到仓库 |
+| `fps` | `60` | 弹幕独立刷新目标，支持 `120`、`60000/1001` 等数值 |
+| `fontname` | `sans-serif` | 系统已安装的字体名；Windows 可尝试 `Microsoft YaHei` |
+| `fontsize` / `bold` | `50` / `yes` | 字号与粗体 |
+| `outline` / `shadow` | `1` / `0` | 描边与阴影 |
+| `scrolltime` / `fixtime` | `15` / `5` | 滚动 / 固定弹幕的显示秒数 |
+| `opacity` | `0.7` | 透明度，0 完全透明，1 不透明 |
+| `displayarea` | `0.85` | 可显示区域占画面高度的比例 |
+| `merge_screen_duplicates` | `no` | 开启改版的相近文本折叠；发布示例为 `yes` |
+| `merge_window` | `15` | 改版折叠的固定时间窗口，实际还受弹幕显示时长限制 |
+| `merge_tolerance` | `-1` | 原版重复合并时间容差；改版折叠开启时走改版规则 |
+| `max_screen_danmaku` | `0` | 同时显示的弹幕数量上限，0 不限制 |
+| `chConvert` | `0` | 0 不转换，1 转简体，2 转繁体 |
+| `blacklist_path` | 空 | 继承的屏蔽规则文件路径，与关键词菜单保存的 JSON 分开 |
+| `history_path` | `~~/danmaku-history.json` | 弹幕关联与显示状态记录路径 |
+
+`~~/` 表示播放器配置目录。关键词菜单按文本包含关系匹配；原版 `blacklist_path` 支持的规则与文件格式见 [原项目文档副本](docs/UPSTREAM_README.md)。
+
+`fps` 不再提高视频帧率，旧 `vf_fps` 不生效。实际弹幕刷新取决于显示器与设备性能。提示已改为 mpv 原生 OSD，旧 `message_x`、`message_y`、`message_anlignment` 不再控制提示位置。
+
+### 常见问题
+
+**控件不显示，或快捷键没有反应**
+
+检查 `scripts/uosc_danmaku/main.lua` 是否存在、是否多套了一层解压目录、脚本文件夹是否叫 `uosc_danmaku`。控件需要合并到 `uosc.conf` 的 `controls=` 中；快捷键冲突检查 `input.conf`。打开 mpv 控制台查看加载错误。
+
+**搜索失败或出现 HTTP 请求错误**
+
+先确认播放器能找到 `curl`，再查看控制台中的具体错误。检查 `api_server`、代理和必要的 Cookie 路径，以及服务是否可访问。网络错误不一定是插件本身的问题；不要通过覆盖安装当前上游来解决，以免丢失改版功能。
+
+**匹配到错误作品、缺少弹幕或时间对不上**
+
+手动搜索并选择正确集数，必要时添加其他受支持的弹幕源，在延迟菜单中调整偏移。同目录混放作品或集数识别失败可能影响自动关联。弹幕库内容由各来源维护；需要完善公共来源时，可参考 [弹弹play](https://www.dandanplay.com/) 和 [原项目关于弹幕源的说明](docs/UPSTREAM_README.md#常见问题)。
+
+**中文输入不可用**
+
+检查 `UoscInputBridge.exe` 是否存在，并确认 uosc 5.13.0 已合并本仓库的中文输入补丁。自动安装器拒绝未知 `Menu.lua` 是为了保护已有修改；这时应手动合并补丁。真实输入法的候选词和组合输入仍在待验证范围内。
+
+**样式或屏蔽词无法保存**
+
+确认配置目录下存在可写的 `script-opts` 目录。样式写入 `uosc_danmaku.conf`，菜单屏蔽词写入 `uosc_danmaku-blocklist.json`；不要误把播放器目录中的同名示例当成实际配置。损坏的屏蔽词 JSON 会阻止保存，先备份并检查文件。
+
+**如何更新，为什么不再自动下载**
+
+从本仓库 [Releases](https://github.com/WiSukia/uosc_danmaku/releases) 下载，备份后按上方步骤更新；`check-update` 只给出手动更新提示。`main` 保留的是 fork 时的原项目内容，使用改版源码请选 `wisukia-enhanced`。
+
+## 来源与致谢
+
+感谢 [Tony15246/uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) 原作者与贡献者提供基础插件、使用说明和实现。本 README 后半部分在原项目 v2.1.0 文档基础上整理，并根据本分支行为修订；它不代表当前上游所有功能都已合并。
+
+保留原项目对以下项目的致谢：
+
+- 弹幕 API：[弹弹play](https://github.com/kaedei/dandanplay-libraryindex/blob/master/api/OpenPlatform.md)
+- 菜单 UI：[uosc](https://github.com/tomasklaen/uosc)
+- 弹幕格式转换参考：[DanmakuConvert](https://github.com/timerring/DanmakuConvert)
+- 简繁转换参考：[OpenCC](https://github.com/BYVoid/OpenCC)
+- Lua MD5 实现参考：[rkscv/danmaku](https://github.com/rkscv/danmaku)
+- B 站弹幕实现参考：[MPV-Play-BiliBili-Comments](https://github.com/itKelis/MPV-Play-BiliBili-Comments)
+- 巴哈姆特弹幕实现参考：[MPV-Play-BAHA-Comments](https://github.com/s594569321/MPV-Play-BAHA-Comments)
+
+原项目文档还列出了相关 fork：[slqy123/uosc_danmaku](https://github.com/slqy123/uosc_danmaku) 与 [Loukyuu1120/uosc_danmaku](https://github.com/Loukyuu1120/uosc_danmaku)。它们的功能和支持范围以各自仓库说明为准。
 
 ## 许可证
 
