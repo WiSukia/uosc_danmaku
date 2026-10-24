@@ -6,8 +6,21 @@ input_loaded, input = pcall(require, "mp.input")
 uosc_available = false
 latest_menu_anime = {}
 
+local search_generation, pending_search = 0, nil
+local function cancel_search_request()
+    search_generation = search_generation + 1
+    if pending_search then pending_search(); pending_search = nil end
+end
+mp.register_event('start-file', cancel_search_request)
+mp.register_event('end-file', cancel_search_request)
+mp.register_script_message('cancel-danmaku-search', function(generation)
+    if tonumber(generation) == search_generation then cancel_search_request() end
+end)
+
 -- 打开番剧数据匹配菜单
 function get_animes(query)
+    cancel_search_request()
+    local generation = search_generation
     local encoded_query = url_encode(query)
     local url = options.api_server .. "/api/v2/search/anime"
     local params = "keyword=" .. encoded_query
@@ -32,56 +45,63 @@ function get_animes(query)
         return
     end
 
-    local res = mp.command_native({ name = 'subprocess', capture_stdout = true, capture_stderr = true, args = args })
-
-    if not res.status or res.status ~= 0 then
-        local message = "获取数据失败"
-        if uosc_available then
-            update_menu_uosc(menu_type, menu_title, message, footnote, menu_cmd, query)
-        else
-            show_message(message, 3)
+    pending_search = call_cmd_async(args, function(error, json)
+        if generation ~= search_generation then return end
+        pending_search = nil
+        async_running = false
+        if error then
+            local message = "获取数据失败"
+            if uosc_available then
+                update_menu_uosc(menu_type, menu_title, message, footnote, menu_cmd, query)
+            else
+                show_message(message, 3)
+            end
+            msg.error(error)
+            return
         end
-        msg.error("HTTP 请求失败：" .. res.stderr)
-    end
 
-    local response = utils.parse_json(res.stdout)
+        local response = utils.parse_json(json)
 
-    if not response or not response.animes then
-        local message = "无结果"
-        if uosc_available then
-            update_menu_uosc(menu_type, menu_title, message, footnote, menu_cmd, query)
-        else
-            show_message(message, 3)
+        if not response or not response.animes then
+            local message = "无结果"
+            if uosc_available then
+                update_menu_uosc(menu_type, menu_title, message, footnote, menu_cmd, query)
+            else
+                show_message(message, 3)
+            end
+            msg.info("无结果")
+            return
         end
-        msg.info("无结果")
-        return
-    end
 
-    for _, anime in ipairs(response.animes) do
-        table.insert(items, {
-            title = anime.animeTitle,
-            hint = anime.typeDescription,
-            value = {
-                "script-message-to",
-                mp.get_script_name(),
-                "search-episodes-event",
-                anime.animeTitle, anime.bangumiId,
-            },
-        })
-    end
+        for _, anime in ipairs(response.animes) do
+            table.insert(items, {
+                title = anime.animeTitle,
+                hint = anime.typeDescription,
+                value = {
+                    "script-message-to",
+                    mp.get_script_name(),
+                    "search-episodes-event",
+                    anime.animeTitle, anime.bangumiId,
+                },
+            })
+        end
 
-    if uosc_available then
-        latest_menu_anime = update_menu_uosc(menu_type, menu_title, items, footnote, menu_cmd, query)
-    elseif input_loaded then
-        show_message("", 0)
-        mp.add_timeout(0.1, function()
-            latest_menu_anime = utils.format_json(items)
-            open_menu_select(items)
-        end)
-    end
+        if uosc_available then
+            latest_menu_anime = update_menu_uosc(menu_type, menu_title, items, footnote, menu_cmd, query)
+        elseif input_loaded then
+            show_message("", 0)
+            mp.add_timeout(0.1, function()
+                if generation ~= search_generation then return end
+                latest_menu_anime = utils.format_json(items)
+                open_menu_select(items)
+            end)
+        end
+    end)
 end
 
 function get_episodes(animeTitle, bangumiId)
+    cancel_search_request()
+    local generation = search_generation
     local url = options.api_server .. "/api/v2/bangumi/" .. bangumiId
     local items = {}
 
@@ -102,57 +122,62 @@ function get_episodes(animeTitle, bangumiId)
         return
     end
 
-    local res = mp.command_native({ name = 'subprocess', capture_stdout = true, capture_stderr = true, args = args })
-
-    if not res.status or res.status ~= 0 then
-        local message = "获取数据失败"
-        if uosc_available then
-            update_menu_uosc(menu_type, menu_title, message, footnote)
-        else
-            show_message(message, 3)
+    pending_search = call_cmd_async(args, function(error, json)
+        if generation ~= search_generation then return end
+        pending_search = nil
+        async_running = false
+        if error then
+            local message = "获取数据失败"
+            if uosc_available then
+                update_menu_uosc(menu_type, menu_title, message, footnote)
+            else
+                show_message(message, 3)
+            end
+            msg.error(error)
+            return
         end
-        msg.error("HTTP 请求失败：" .. res.stderr)
-    end
 
-    local response = utils.parse_json(res.stdout)
+        local response = utils.parse_json(json)
 
-    if not response or not response.bangumi or not response.bangumi.episodes then
-        local message = "无结果"
-        if uosc_available then
-            update_menu_uosc(menu_type, menu_title, message, footnote)
-        else
-            show_message(message, 3)
+        if not response or not response.bangumi or not response.bangumi.episodes then
+            local message = "无结果"
+            if uosc_available then
+                update_menu_uosc(menu_type, menu_title, message, footnote)
+            else
+                show_message(message, 3)
+            end
+            msg.info("无结果")
+            return
         end
-        msg.info("无结果")
-        return
-    end
 
-    table.insert(items, {
-        title = "← 返回搜索结果",
-        value = { "script-message-to", mp.get_script_name(), "open-latest-menu-anime", latest_menu_anime },
-        keep_open = false,
-        selectable = true,
-    })
-
-    for _, episode in ipairs(response.bangumi.episodes) do
         table.insert(items, {
-            title = episode.episodeTitle,
-            hint = episode.episodeNumber,
-            value = { "script-message-to", mp.get_script_name(), "load-danmaku",
-            animeTitle, episode.episodeTitle, episode.episodeId },
+            title = "← 返回搜索结果",
+            value = { "script-message-to", mp.get_script_name(), "open-latest-menu-anime", latest_menu_anime },
             keep_open = false,
             selectable = true,
         })
-    end
 
-    if uosc_available then
-        footnote = mp.get_property("filename")
-        update_menu_uosc(menu_type, menu_title, items, footnote)
-    elseif input_loaded then
-        mp.add_timeout(0.1, function()
-            open_menu_select(items)
-        end)
-    end
+        for _, episode in ipairs(response.bangumi.episodes) do
+            table.insert(items, {
+                title = episode.episodeTitle,
+                hint = episode.episodeNumber,
+                value = { "script-message-to", mp.get_script_name(), "load-danmaku",
+                animeTitle, episode.episodeTitle, episode.episodeId },
+                keep_open = false,
+                selectable = true,
+            })
+        end
+
+        if uosc_available then
+            footnote = mp.get_property("filename")
+            update_menu_uosc(menu_type, menu_title, items, footnote)
+        elseif input_loaded then
+            mp.add_timeout(0.1, function()
+                if generation ~= search_generation then return end
+                open_menu_select(items)
+            end)
+        end
+    end)
 end
 
 function update_menu_uosc(menu_type, menu_title, menu_item, menu_footnote, menu_cmd, query)
@@ -179,6 +204,8 @@ function update_menu_uosc(menu_type, menu_title, menu_item, menu_footnote, menu_
         on_search = menu_cmd,
         footnote = menu_footnote,
         search_suggestion = query,
+        on_close = (menu_type == 'menu_anime' or menu_type == 'menu_episodes') and
+            {'script-message-to', mp.get_script_name(), 'cancel-danmaku-search', tostring(search_generation)} or nil,
         items = items,
     }
     local json_props = utils.format_json(menu_props)
@@ -261,6 +288,7 @@ function open_input_menu_uosc()
 end
 
 function open_input_menu()
+    cancel_search_request()
     if uosc_available then
         open_input_menu_uosc()
     elseif input_loaded then
@@ -1192,6 +1220,7 @@ end)
 
 -- 注册函数给 uosc 按钮使用
 mp.register_script_message("search-anime-event", function(query)
+    cancel_search_request()
     if uosc_available then
         mp.commandv("script-message-to", "uosc", "close-menu", "menu_danmaku")
     end

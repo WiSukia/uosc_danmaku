@@ -21,7 +21,7 @@ foreach ($fileName in @('README.md','CHANGELOG.md','LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $repoRoot $fileName) -Destination $stagePath
 }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-$zipPath = Join-Path $OutputDirectory 'uosc_danmaku-v2.1.0-wisukia.1-windows.zip'
+$zipPath = Join-Path $OutputDirectory 'uosc_danmaku-v2.1.0-wisukia.2-windows.zip'
 if (Test-Path -LiteralPath $zipPath) { throw '目标 ZIP 已存在，请选择新的输出目录。' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($stagePath, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)

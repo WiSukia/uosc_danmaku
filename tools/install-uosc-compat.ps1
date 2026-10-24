@@ -12,8 +12,8 @@ function Get-NormalizedHash([string]$FilePath) {
     finally { $hasher.Dispose() }
 }
 $currentHash = Get-NormalizedHash $targetPath
-if ($currentHash -eq $hashes.patched) { Write-Output '中文输入兼容补丁已安装。'; return }
-if ($currentHash -ne $hashes.original) { throw 'Menu.lua 不是未修改的 uosc 5.13.0，已停止以保护现有改动。请手动合并 native-input.patch。' }
+if ($currentHash -eq $hashes.patched) { Write-Output '输入与弹幕菜单兼容补丁已安装。'; return }
+if ($currentHash -ne $hashes.original -and $currentHash -notin @($hashes.previous_patched)) { throw 'Menu.lua 不是原版 uosc 5.13.0 或本仓库已知旧版补丁，已停止以保护现有改动。请手动合并 native-input.patch。' }
 $backupPath = $targetPath + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fffffff') + '-native-input'
 Copy-Item -LiteralPath $targetPath -Destination $backupPath
 Copy-Item -LiteralPath (Join-Path $compatDirectory 'Menu.lua') -Destination $targetPath

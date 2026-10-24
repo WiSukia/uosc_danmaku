@@ -730,6 +730,9 @@ end
 -- 异步执行命令
 -- 同时返回 abort 函数，用于取消异步命令
 function call_cmd_async(args, callback)
+    if args.danmaku_json_request then
+        return require('modules/http').request(args, callback)
+    end
     async_running = true
     local abort_signal = mp.command_native_async({
         name = 'subprocess',

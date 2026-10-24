@@ -351,6 +351,12 @@ function Menu:update_dimensions()
 			self.scroll_step + self.separator_size + 1 or 0
 		local footnote_height = self.font_size * 1.5
 		local max_height = height_available - title_height - footnote_height
+		-- Keep the danmaku blocklist compact; existing scrolling handles overflow.
+		if self.type == 'menu_danmaku_blocklist' then
+			max_height = math.min(max_height, self.scroll_step * 12 - self.item_spacing)
+		end
+		-- The first four blocklist actions stay above the scrolling words.
+		menu.fixed_count = self.type == 'menu_danmaku_blocklist' and menu.is_root and math.min(4, #menu.items) or 0
 		local content_height = self.scroll_step * #menu.items
 		menu.height = math.min(content_height - self.item_spacing, max_height)
 		menu.top = clamp(
@@ -473,7 +479,11 @@ function Menu:scroll_to_index(index, menu_id, immediate)
 	local menu = self:get_menu(menu_id)
 	if not menu then return end
 	if (index and index >= 1 and index <= #menu.items) then
-		local position = round((self.scroll_step * (index - 1)) - ((menu.height - self.scroll_step) / 2))
+		local fixed_count = menu.fixed_count or 0
+		if index <= fixed_count then return end
+		local fixed_height = fixed_count * self.scroll_step
+		local position = round(self.scroll_step * (index - 1) - fixed_height
+			- ((menu.height - fixed_height - self.scroll_step) / 2))
 		if immediate then
 			self:set_scroll_to(position, menu_id)
 		else
@@ -828,7 +838,17 @@ function Menu:search_internal(menu_id, no_select_first)
 		while not search_submenus and parent_menu do
 			search_submenus, parent_menu = parent_menu.search_submenus, parent_menu.parent_menu
 		end
-		menu.items = search_items(menu.search.source.items, query, search_submenus)
+		if self.type == 'menu_danmaku_blocklist' and menu.is_root then
+			local source = menu.search.source
+			local fixed_count = menu.fixed_count or 0
+			local words = {}
+			for i = fixed_count + 1, #source.items do words[#words + 1] = source.items[i] end
+			menu.items = {}
+			for i = 1, math.min(fixed_count, #source.items) do menu.items[i] = source.items[i] end
+			itable_append(menu.items, search_items(words, query, search_submenus))
+		else
+			menu.items = search_items(menu.search.source.items, query, search_submenus)
+		end
 		-- Select 1st item in search results
 		if not no_select_first then
 			menu.scroll_y = 0
@@ -1397,9 +1417,14 @@ function Menu:render()
 		}
 		-- local ax, ay, bx, by = x + self.padding, menu.top, x + menu.width + self.padding, menu.top + menu.height
 		local draw_title = menu.is_root and menu.title or menu.search
-		local scroll_clip = '\\clip(0,' .. content_rect.ay .. ',' .. display.width .. ',' .. content_rect.by .. ')'
-		local start_index = math.floor(menu.scroll_y / self.scroll_step) + 1
+		local fixed_count = menu.fixed_count or 0
+		local scroll_top = content_rect.ay + fixed_count * self.scroll_step
+		local scroll_clip = '\\clip(0,' .. scroll_top .. ',' .. display.width .. ',' .. content_rect.by .. ')'
+		local start_index = math.floor(menu.scroll_y / self.scroll_step) + fixed_count + 1
 		local end_index = math.ceil((menu.scroll_y + menu.height) / self.scroll_step)
+		local visible_indices = {}
+		for index = 1, fixed_count do visible_indices[#visible_indices + 1] = index end
+		for index = start_index, end_index do visible_indices[#visible_indices + 1] = index end
 		local bg_rect = {
 			ax = x,
 			ay = content_rect.ay - (draw_title and self.scroll_step or 0) - self.padding,
@@ -1421,9 +1446,10 @@ function Menu:render()
 
 		-- Scrollbar
 		if menu.scroll_height > 0 then
-			local groove_height = menu.height - 2
-			local thumb_height = math.max((menu.height / (menu.scroll_height + menu.height)) * groove_height, 40)
-			local thumb_y = content_rect.ay + 1 + ((menu.scroll_y / menu.scroll_height) * (groove_height - thumb_height))
+			local scroll_height = math.max(1, content_rect.by - scroll_top)
+			local groove_height = math.max(1, scroll_height - 2)
+			local thumb_height = math.min(groove_height, math.max((scroll_height / (menu.scroll_height + scroll_height)) * groove_height, 40))
+			local thumb_y = scroll_top + 1 + ((menu.scroll_y / menu.scroll_height) * (groove_height - thumb_height))
 			local sax = content_rect.bx - round(self.scrollbar_size / 2)
 			local sbx = sax + self.scrollbar_size
 			ass:rect(sax, thumb_y, sbx, thumb_y + thumb_height, {color = fg, opacity = menu_opacity * 0.8})
@@ -1441,27 +1467,30 @@ function Menu:render()
 
 		---@type MenuAction|nil
 		local selected_action
-		for index = start_index, end_index, 1 do
+		for _, index in ipairs(visible_indices) do
 			local item = menu.items[index]
 
 			if not item then break end
 
-			local item_ay = content_rect.ay - menu.scroll_y + self.scroll_step * (index - 1)
+			local item_top = index <= fixed_count and content_rect.ay or scroll_top
+			local item_ay = content_rect.ay + self.scroll_step * (index - 1)
+				- (index <= fixed_count and 0 or menu.scroll_y)
 			local item_by = item_ay + self.item_height
 			local item_center_y = item_ay + (self.item_height / 2)
-			local item_clip = (item_ay < content_rect.ay or item_by > content_rect.by) and scroll_clip or nil
+			local item_clip = (item_ay < item_top or item_by > content_rect.by) and scroll_clip or nil
 			local content_ax, content_bx = content_rect.ax + self.item_padding,
 				content_rect.bx - self.item_padding
 			local is_selected = menu.selected_index == index
 			local item_rect_hitbox = {
 				ax = content_rect.ax,
-				ay = math.max(item_ay, bg_rect.ay),
+				ay = math.max(item_ay, item_top),
 				bx = bg_rect.bx + (item.items and self.gap or -self.padding), -- to bridge the submenu gap with cursor
 				by = math.min(item_ay + self.scroll_step, bg_rect.by),
 			}
 
 			-- Select hovered item
 			if is_current and self.mouse_nav
+				and item_rect_hitbox.by > item_rect_hitbox.ay
 				and (submenu_is_hovered or get_point_to_rectangle_proximity(cursor, item_rect_hitbox) <= 0) then
 				self.mouse_hovered_index = index
 				-- Do not select items if cursor is moving towards a submenu
@@ -1494,7 +1523,7 @@ function Menu:render()
 				end
 				ass:rect(
 					content_rect.ax + self.item_padding, ay, content_rect.bx - self.item_padding, by,
-					{color = fg, opacity = menu_opacity * (item.separator and 0.13 or 0.04)}
+					{color = fg, opacity = menu_opacity * (item.separator and 0.13 or 0.04), clip = item_clip}
 				)
 			end
 
@@ -1627,7 +1656,7 @@ function Menu:render()
 			if item.hint then
 				item.ass_safe_hint = item.ass_safe_hint or ass_escape(item.hint)
 				local clip = '\\clip(' .. title_clip_bx + self.item_padding .. ','
-					.. math.max(item_ay, content_rect.ay) .. ',' .. hint_clip_bx .. ','
+					.. math.max(item_ay, item_top) .. ',' .. hint_clip_bx .. ','
 					.. math.min(item_by, content_rect.by) .. ')'
 				ass:txt(content_bx, item_center_y, 6, item.ass_safe_hint, {
 					size = self.font_size_hint,
@@ -1641,7 +1670,7 @@ function Menu:render()
 			-- Title
 			if item.title then
 				item.ass_safe_title = item.ass_safe_title or ass_escape(item.title)
-				local clip = '\\clip(' .. content_rect.ax .. ',' .. math.max(item_ay, content_rect.ay) .. ','
+				local clip = '\\clip(' .. content_rect.ax .. ',' .. math.max(item_ay, item_top) .. ','
 					.. title_clip_bx .. ',' .. math.min(item_by, content_rect.by) .. ')'
 				local title_x, align = content_ax, 4
 				if item.align == 'right' then

@@ -110,6 +110,7 @@ function make_danmaku_request_args(method, url, headers, body)
 
     table.insert(args, url)
 
+    args.danmaku_json_request = true
     return args
 end
 
@@ -316,7 +317,7 @@ local function match_file(file_path, file_name, callback)
         async_running = false
         if error then
             show_message("HTTP 请求失败，打开控制台查看详情", 5)
-            callback(error)
+            callback(error, true)
             return
         end
         local data = utils.parse_json(json)
@@ -582,9 +583,10 @@ function get_danmaku_with_hash(file_name, file_path)
 
             file_path = utils.join_path(DANMAKU_PATH, temp_file)
 
-            match_file(file_path, file_name, function(error)
+            match_file(file_path, file_name, function(error, transport_failed)
                 if error then
                     msg.error(error)
+                    if transport_failed then return end
                     msg.info("尝试通过解析文件名获取弹幕")
                     match_anime()
                 end
@@ -602,9 +604,10 @@ function get_danmaku_with_hash(file_name, file_path)
             match_anime()
             return
         end
-        match_file(file_path, file_name, function(error)
+        match_file(file_path, file_name, function(error, transport_failed)
             if error then
                 msg.error(error)
+                if transport_failed then return end
                 msg.info("尝试通过解析文件名获取弹幕")
                 match_anime()
             end

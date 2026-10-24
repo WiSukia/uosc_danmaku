@@ -10,12 +10,14 @@ def player(path):
     lua = LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     g.path = path.as_posix()
+    lua.execute("package.path = " + json.dumps(repo.as_posix()+'/?.lua;') + " .. package.path")
     def decode(text, *_):
         try: return lua.table_from(json.loads(text), recursive=True)
         except (ValueError, TypeError): return None
     def encode(value):
         return json.dumps({'version':value.version,'enabled':value.enabled,
-            'words':[value.words[i] for i in range(1,len(value.words)+1)]},ensure_ascii=False)
+            'words':[value.words[i] for i in range(1,len(value.words)+1)],
+            'auto':{key:bool(value.auto[key]) for key in ('date','people','group')}},ensure_ascii=False)
     g.decode, g.encode = decode, encode
     lua.execute('''
         mp={command_native=function() return path end,

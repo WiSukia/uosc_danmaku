@@ -1,8 +1,12 @@
 local mp = require('mp')
 local utils = require('mp.utils')
 local M = {}
+local auto_filter = require('modules/autofilter')
+local auto_keys = {'date','people','group'}
+local auto_titles = {date='日期与报到', people='人数统计', group='交流群与群号'}
+local function default_auto() return {date=true, people=true, group=true} end
 local path = mp.command_native({'expand-path', '~~/script-opts/uosc_danmaku-blocklist.json'})
-local state, lowered, read_error = {version=1, enabled=true, words={}}, {}, nil
+local state, lowered, read_error = {version=1, enabled=true, words={}, auto=default_auto()}, {}, nil
 
 local function read(pathname)
     local f, err, code = io.open(pathname, 'rb')
@@ -18,7 +22,7 @@ function M.reload()
     local text, err = read(path)
     if not text and not err then text, err = read(path .. '.bak') end
     if not text and not err then
-        state, lowered, read_error = {version=1, enabled=true, words={}}, {}, nil
+        state, lowered, read_error = {version=1, enabled=true, words={}, auto=default_auto()}, {}, nil
         return true
     end
     local parsed = text and utils.parse_json(text:gsub('^\239\187\191', ''))
@@ -26,6 +30,16 @@ function M.reload()
             or type(parsed.words) ~= 'table' then
         read_error = err or '屏蔽词文件内容无效'
         return false
+    end
+    local auto = default_auto()
+    if parsed.auto ~= nil then
+        if type(parsed.auto) ~= 'table' then read_error='自动屏蔽设置无效'; return false end
+        for _, key in ipairs(auto_keys) do
+            if parsed.auto[key] ~= nil then
+                if type(parsed.auto[key]) ~= 'boolean' then read_error='自动屏蔽设置无效'; return false end
+                auto[key] = parsed.auto[key]
+            end
+        end
     end
     local words, keys, seen = {}, {}, {}
     for _, word in ipairs(parsed.words) do
@@ -35,17 +49,17 @@ function M.reload()
             words[#words+1], keys[#keys+1], seen[key] = word, key, true
         end
     end
-    state, lowered, read_error = {version=1, enabled=parsed.enabled, words=words}, keys, nil
+    state, lowered, read_error = {version=1, enabled=parsed.enabled, words=words, auto=auto}, keys, nil
     return true
 end
 
 function M.matches(text)
-    if not state.enabled or #lowered == 0 then return false end
+    if not state.enabled then return false end
     text = tostring(text or ''):lower()
     for _, word in ipairs(lowered) do
-        if text:find(word, 1, true) then return true end
+        if text:find(word, 1, true) then return true, 'word' end
     end
-    return false
+    return auto_filter.matches(text, state.auto)
 end
 
 local function save(next_state)
@@ -96,7 +110,7 @@ function M.add(word)
     local words = {}
     for i, old in ipairs(state.words) do words[i] = old end
     words[#words+1] = word
-    local ok, err = save({version=1, enabled=state.enabled, words=words})
+    local ok, err = save({version=1, enabled=state.enabled, words=words, auto=state.auto})
     if ok then refresh() end
     return ok, err
 end
@@ -105,14 +119,25 @@ function M.remove(word)
     if not M.reload() then return false, read_error end
     local words = {}
     for _, old in ipairs(state.words) do if old ~= word then words[#words+1] = old end end
-    local ok, err = save({version=1, enabled=state.enabled, words=words})
+    local ok, err = save({version=1, enabled=state.enabled, words=words, auto=state.auto})
     if ok then refresh() end
     return ok, err
 end
 
 function M.toggle()
     if not M.reload() then return false, read_error end
-    local ok, err = save({version=1, enabled=not state.enabled, words=state.words})
+    local ok, err = save({version=1, enabled=not state.enabled, words=state.words, auto=state.auto})
+    if ok then refresh() end
+    return ok, err
+end
+
+function M.toggle_auto(key)
+    if not auto_titles[key] then return false, '未知的自动屏蔽规则' end
+    if not M.reload() then return false, read_error end
+    local auto = {}
+    for _, name in ipairs(auto_keys) do auto[name] = state.auto[name] end
+    auto[key] = not auto[key]
+    local ok, err = save({version=1, enabled=state.enabled, words=state.words, auto=auto})
     if ok then refresh() end
     return ok, err
 end
@@ -123,7 +148,7 @@ local function command(action, value)
     return cmd
 end
 
-function M.open()
+function M.open(update)
     M.reload()
     local items = {
         {title='返回弹幕设置', icon='arrow_back', value=command('open_add_total_menu')},
@@ -132,18 +157,38 @@ function M.open()
             value=command('danmaku-blocklist-toggle')},
     }
     items[#items].separator = true
+    local enabled_count = 0
+    for _, key in ipairs(auto_keys) do if state.auto[key] then enabled_count = enabled_count + 1 end end
+    items[#items+1] = {title='自动屏蔽规则', hint=enabled_count .. '/3 开启', icon='chevron_right',
+        value=command('danmaku-blocklist-auto-open'), separator=true}
     for _, word in ipairs(state.words) do
-        items[#items+1] = {title=word, hint='点击删除', icon='delete', value=command('danmaku-blocklist-delete',word)}
+        items[#items+1] = {title=word, hint='点击删除', icon='delete', value=command('danmaku-blocklist-delete',word), keep_open=true}
     end
     if #state.words == 0 then items[#items+1]={title='尚未添加屏蔽词', selectable=false, italic=true} end
     if uosc_available then
-        mp.commandv('script-message-to','uosc','open-menu',utils.format_json({
+        mp.commandv('script-message-to','uosc',update == true and 'update-menu' or 'open-menu',utils.format_json({
             type='menu_danmaku_blocklist', title='弹幕屏蔽 · ' .. #state.words .. ' 个词', items=items,
             footnote=read_error or '包含屏蔽词即过滤；英文忽略大小写；点击词条删除；自动保存', search_style='on_demand',
         }))
     elseif input_loaded then
         open_menu_select(items)
     end
+end
+
+function M.open_auto()
+    M.reload()
+    local items = {{title='返回屏蔽列表', icon='arrow_back', value=command('danmaku-blocklist-open')}}
+    for _, key in ipairs(auto_keys) do
+        local enabled = state.auto[key]
+        items[#items+1] = {title=auto_titles[key], hint=enabled and '已开启' or '已关闭',
+            icon=enabled and 'toggle_on' or 'toggle_off', value=command('danmaku-blocklist-auto-toggle',key)}
+    end
+    local footnote = read_error or (state.enabled and '点击分别开关并自动保存；关闭规则不影响手动屏蔽词'
+        or '总屏蔽已关闭，自动规则暂停；可在屏蔽列表中开启')
+    if uosc_available then
+        mp.commandv('script-message-to','uosc','open-menu',utils.format_json({type='menu_danmaku_auto_blocklist',
+            title='自动屏蔽规则',items=items,footnote=footnote,search_style='disabled'}))
+    elseif input_loaded then open_menu_select(items) end
 end
 
 local bridge_request, bridge_channel, bridge_active, bridge_text, bridge_display, bridge_layout, shutting_down
@@ -329,6 +374,12 @@ function M.input(text, error)
     end
 end
 
+mp.register_script_message('danmaku-blocklist-auto-open',M.open_auto)
+mp.register_script_message('danmaku-blocklist-auto-toggle',function(key)
+    local ok, err = M.toggle_auto(key)
+    if not ok then notify(err or '自动屏蔽设置保存失败') end
+    M.open_auto()
+end)
 mp.register_script_message('danmaku-blocklist-open',M.open)
 mp.register_script_message('danmaku-blocklist-input',M.input)
 mp.register_script_message('danmaku-blocklist-add',function(word)
@@ -338,7 +389,7 @@ end)
 mp.register_script_message('danmaku-blocklist-delete',function(word)
     local ok, err=M.remove(word)
     if not ok then notify(err or '屏蔽词保存失败') end
-    M.open()
+    M.open(true)
 end)
 mp.register_script_message('danmaku-blocklist-toggle',function()
     local ok, err=M.toggle()

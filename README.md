@@ -6,6 +6,8 @@
 
 - 弹幕样式菜单支持保存字体、字号、粗体、描边、阴影、透明度、滚动时间、显示区域、折叠开关和刷新目标。
 - 相近重复弹幕按固定时间窗口折叠，显示 `× N`。忽略部分标点、空白和英文字母大小写，保留影响数字含义的分隔符；窗口不会随新弹幕延长。这是文本规则匹配。
+- 自动屏蔽日期与报到、人数统计、交流群与群号，三类规则默认开启，可分别开关并自动保存。
+- 屏蔽菜单最多 12 行，顶部四个操作项固定；下方词条滚动，删除时原地更新并保留滚动位置和搜索。
 - 关键词屏蔽支持添加、删除、启用/停用和持久保存，按包含关系匹配，英文忽略大小写。
 - Windows 原生中文输入桥接，在 uosc 的屏蔽词菜单中显示输入、选区和输入法组合状态。
 - 弹幕使用独立计时器与预测播放时钟刷新，暂停、缓存、跳转、倍速、倒放和卸载时校准。默认目标 60，可设 120 或分数；实际刷新受显示器和性能限制。
@@ -14,18 +16,18 @@
 
 ## 下载和安装
 
-下载 [Releases](https://github.com/WiSukia/uosc_danmaku/releases) 中的 `uosc_danmaku-v2.1.0-wisukia.1-windows.zip`，并按 `SHA256SUMS.txt` 校验。首次发布标为预发布，当前验证范围见 [验证记录](docs/VERIFICATION.md)。
+下载 [Releases](https://github.com/WiSukia/uosc_danmaku/releases) 中的 `uosc_danmaku-v2.1.0-wisukia.2-windows.zip`，并按 `SHA256SUMS.txt` 校验。本版本仍标为预发布，当前验证范围见 [验证记录](docs/VERIFICATION.md)。
 
 1. 关闭播放器，备份已有 `scripts/uosc_danmaku` 和弹幕配置。
 2. 解压 ZIP，将 `scripts/uosc_danmaku` 复制到 mpv 配置目录。mpv.net 通常是 `%APPDATA%/mpv.net`；原生 mpv 通常是 `%APPDATA%/mpv`。
 3. 创建 `script-opts` 目录。首次安装将 `examples/uosc_danmaku.conf` 复制为 `script-opts/uosc_danmaku.conf`；已有配置请合并选项。旧 `vf_fps` 已不再使用，可删除该项。
-4. 安装 [uosc 5.13.0](https://github.com/tomasklaen/uosc/releases/tag/5.13.0)。Windows 中文输入还需要本包中的兼容补丁：
+4. 安装 [uosc 5.13.0](https://github.com/tomasklaen/uosc/releases/tag/5.13.0)。Windows 中文输入和下方弹幕屏蔽菜单布局需要本包中的兼容补丁：
 
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\install-uosc-compat.ps1 -MpvConfigDirectory "$env:APPDATA\mpv.net"
    ```
 
-   安装脚本仅接受未修改的 uosc 5.13.0 `Menu.lua`，会备份并回读。已有修改或其他版本会停止，请自行合并 `compat/uosc-5.13.0/native-input.patch`。不要直接覆盖其他定制的 uosc 文件。
+   安装脚本接受未修改的 uosc 5.13.0 `Menu.lua` 或本仓库首版兼容补丁，可自动升级旧补丁，会备份并回读。已有修改或其他版本会停止，请自行合并 `compat/uosc-5.13.0/native-input.patch`。不要直接覆盖其他定制的 uosc 文件。
 5. 重启播放器。默认 `Ctrl+d` 搜索弹幕，`j` 显示/隐藏。继续阅读下方的 [基础使用说明](#基础使用说明)，配置 uosc 控件和可选功能。
 
 ZIP 中的输入助手由仓库 `UoscInputBridge.cs` 编译；不含个人播放历史、屏蔽词、Cookie、代理设置或播放器完整配置。关键词会保存到用户配置目录的 `script-opts/uosc_danmaku-blocklist.json`，历史记录默认保存为 `danmaku-history.json`。
@@ -171,6 +173,16 @@ C:\Videos\episode01.xml
 
 地址解析和弹幕内容来自第三方服务，示例不保证当前可访问。多个来源的偏移可在“弹幕源延迟”中分别设置。原版 `add_from_source` 选项已经废除，不需要再添加它。
 
+### 自动屏蔽与列表操作
+
+在“弹幕设置 → 弹幕屏蔽 → 自动屏蔽规则”中分别开关日期与报到、人数统计、交流群与群号。“启用屏蔽”总开关同时控制手动词与自动规则。旧版 JSON 没有 `auto` 字段时，三类默认开启；首次切换或编辑屏蔽词会保存新字段，不清空旧词。
+
+这些是本地文字规则，不联网，也不调用 AI：日期规则识别完整日期和有限的签到、报到等前后缀，并校验年月日；人数规则匹配整条统计格式；群号规则要求群相关词和 5～12 位数字，或明确的加群招募短语。支持全角数字及部分空格、分隔符变体，不能覆盖所有广告变体。
+
+关闭某类自动规则不会停用手动词；过宽的手动词仍可能误伤。界面可以分别开关三类，但不能编辑自动匹配条件。个人设置保存在 `script-opts/uosc_danmaku-blocklist.json`，不包含在发布包中。日期和人数的普通剧情语句通常保留。
+
+更新后重新运行 uosc 兼容补丁安装器。屏蔽列表顶部“返回、添加、启用屏蔽、自动屏蔽规则”四行固定，下方词条滚动；点击删除不会关闭重开弹窗，搜索和滚动位置保留，到达末尾时只做必要的滚动范围调整。
+
 ### 常用弹幕配置
 
 除菜单保存外，也可直接编辑 `script-opts/uosc_danmaku.conf`，重启播放器使文件中的设置生效。下表为**代码默认值**；发布包示例另外设置了 API 代理并开启改版折叠。
@@ -210,6 +222,10 @@ C:\Videos\episode01.xml
 
 先确认播放器能找到 `curl`，再查看控制台中的具体错误。检查 `api_server`、代理和必要的 Cookie 路径，以及服务是否可访问。网络错误不一定是插件本身的问题；不要通过覆盖安装当前上游来解决，以免丢失改版功能。
 
+本分支的弹幕 JSON API 请求使用 5 秒连接超时、12 秒单次总超时。遇到暂时性连接失败或 HTTP 5xx 时，等待 1 秒后重试一次；若使用作者的 `https://danmaku-api.152468.xyz` 或 `https://danmaku-us.152468.xyz`，仍失败会切换到另一个等价接口，再允许重试一次，总共最多四次尝试。成功的接口优先使用 60 秒。HTTP 429 等客户端错误不会触发重试或切换，自定义服务器也不会转发到作者接口。
+
+搜索及选择集数异步执行；重新搜索、关闭菜单或切换视频会取消旧请求。控制台中的 `API request failed` 会标明接口地址、curl 返回码和 HTTP 状态，新增诊断不输出查询参数、文件哈希或响应正文。网络请求全部失败后会停止本次自动匹配；哈希查询正常返回但未匹配时，仍会尝试文件名匹配。
+
 **匹配到错误作品、缺少弹幕或时间对不上**
 
 手动搜索并选择正确集数，必要时添加其他受支持的弹幕源，在延迟菜单中调整偏移。同目录混放作品或集数识别失败可能影响自动关联。弹幕库内容由各来源维护；需要完善公共来源时，可参考 [弹弹play](https://www.dandanplay.com/) 和 [原项目关于弹幕源的说明](docs/UPSTREAM_README.md#常见问题)。
@@ -244,4 +260,4 @@ C:\Videos\episode01.xml
 
 ## 许可证
 
-弹幕插件及新增助手源码遵循根目录 [MIT LICENSE](LICENSE)，保留 Tony 的版权声明。`compat/uosc-5.13.0/Menu.lua` 来自 tomasklaen/uosc 5.13.0，仅加入中文输入桥接修改，遵循该项目的 [LGPL v2.1](compat/uosc-5.13.0/LICENSE.LGPL)。该目录附补丁、校验与来源说明；根目录 MIT 不覆盖 uosc 派生文件。
+弹幕插件及新增助手源码遵循根目录 [MIT LICENSE](LICENSE)，保留 Tony 的版权声明。`compat/uosc-5.13.0/Menu.lua` 来自 tomasklaen/uosc 5.13.0，加入中文输入桥接和弹幕屏蔽菜单修改，遵循该项目的 [LGPL v2.1](compat/uosc-5.13.0/LICENSE.LGPL)。该目录附补丁、校验与来源说明；根目录 MIT 不覆盖 uosc 派生文件。
